@@ -9,10 +9,10 @@ import mahotas
 import progressbar
 
 def augmentation(img, mode, size):
-    # 不能直接在原始image上改动
+    ''' 不能直接在原始image上改动
+        添加随机模糊和噪声
+    '''
     image = img.copy()
-    '''添加随机模糊和噪声'''
-
     # 高斯模糊
     if mode == 0:
         image = cv2.GaussianBlur(image,(5, 5), np.random.randint(1, 10))
@@ -73,6 +73,8 @@ def augmentation(img, mode, size):
 
 # 根据字体输出图像
 def draw_txt(n, charset, fonts, size):
+    img_w, img_h = (size[0], size[1])
+    factor = 1  # 初始字体大小
     # 初始化进度条
     widgets = ["数据集创建中: ", progressbar.Percentage(), " ",
                progressbar.Bar(), " ", progressbar.ETA()]
@@ -80,40 +82,44 @@ def draw_txt(n, charset, fonts, size):
                                    widgets=widgets).start()
     # 遍历所有字
     for i in range(n):
+        char = charset[i]  # 当前字
         # 遍历字体
-        for j in range(len(fonts)):
-            # 创建画布
-            canvas = np.zeros(shape=size, dtype=np.uint8)
-            canvas[0:] = 255
-
-            # 转换图像模式，保证合成的两张图尺寸模式一致
-            base = Image.fromarray(canvas).convert('RGBA')
-
-            # 显示字符的前景图，设为全透明
-            txt = Image.new('RGBA', base.size, (0, 0, 0, 0))
-
-            # 在前景上绘图
-            d = ImageDraw.Draw(txt)
-
-            # 绘制不透明字符
-            d.text((1, 1), charset[i], font=fonts[j], fill=(0, 0, 0, 255))
-
-            # 将两幅图贴在一起（左上右下，考虑透明度）
-            combined = Image.alpha_composite(base, txt)
-
-            # 去除透明度通道
-            (b, g, r, a) = combined.split()
-            rgb_img = Image.merge("RGB", (b, g, r))
-            img = np.array(rgb_img)
-
-            # 得到灰度图
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
+        for j, each in zip(range(len(fonts)), fonts):
             # 数据增强
             for mode in range(0, 8):
+                # 创建画布
+                canvas = np.zeros(shape=(img_w, img_h), dtype=np.uint8)
+                canvas[0:] = 255
+                # 从ndarray转成image进行渲染
+                ndimg = Image.fromarray(canvas).convert('RGBA')
+                draw = ImageDraw.Draw(ndimg)
+
+                font = ImageFont.truetype(each, int(img_h * factor), 0)
+                text_size = font.getsize(char)  # 获取当前字体下的文本区域大小
+
+                # 自动调整字体大小避免超出边界, 至少留白水平10%
+                margin = [img_w - int(0.2 * img_w), img_h - int(0.2 * img_h)]
+                while (text_size[0] > margin[0]) or (text_size[1] > margin[1]):
+                    factor -= 0.01  # 控制字体大小
+                    font = ImageFont.truetype(each, int(img_h * factor), 0)  # 加载字体
+                    text_size = font.getsize(char)
+
+                # 随机平移
+                horizontal_space = int(img_w - text_size[0])
+                vertical_space = int(img_h - text_size[1])
+                start_x = np.random.randint(1, horizontal_space - 1)
+                start_y = np.random.randint(1, vertical_space - 1)
+
+                # 绘制当前文本行
+                draw.text((start_x, start_y), char, font=font, fill=(0, 0, 0, 255))
+                img_array = np.array(ndimg)
+                # ndimg.show()
+                # 转灰度图
+                img = img_array[:, :, 0]  # [32, 256, 4]
                 # 生成保存路径
                 save_path = os.path.join(config.IMAGE_PATH, charset[i])
                 img_name = save_path + '/' + str(i) + '_' + str(j) + '_' + str(mode) + '.jpg'
+                # 数据增强
                 aug = augmentation(img, mode, size)
                 out = Image.fromarray(aug)
 
@@ -129,19 +135,17 @@ def draw_txt(n, charset, fonts, size):
     pbar.finish()
 
 # 自动加载字体文件
-def load_fonts(size):
+def load_fonts():
     fnts = []
 
     # 字体路径
-    font_path = os.path.join(config.FONT_PATH, "*.*")
+    font_path = os.path.join(config.FONT_PATH, "*.ttf")
     # 获取全部字体路径，存成list
     fonts = list(glob.glob(font_path))
 
     # 遍历字体文件
     for each in fonts:
-        # 调整字体大小
-        fnt = ImageFont.truetype(each, int(size[0]*1.75/2), 0)
-        fnts.append(fnt)
+        fnts.append(each)
 
     return fnts
 
@@ -153,10 +157,11 @@ if __name__ == '__main__':
     # 批大小
     batchSize = 1024
     # 图像尺寸
-    size = (64, 64)
+    size = (64, 64)  # w, h
 
     # 字体list，每一个字符遍历所有字体，依次输出
-    fonts = load_fonts(size)
+    factor = 1
+    fonts = load_fonts()
 
     # 字符集，将其中的字符保存成图像
     charset = u"的一是不人有了在你我个大中要这为上生时会以就子到来" \
